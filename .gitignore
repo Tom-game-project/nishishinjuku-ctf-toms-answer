@@ -13,3 +13,6 @@ wheels/
 
 *.swp
 *.swo
+
+# bin
+chall_vulnfunc

