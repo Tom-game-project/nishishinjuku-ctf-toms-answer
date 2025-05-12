@@ -30,6 +30,7 @@ int main(void)
 }
 // gcc easy.c -fno-stack-protector -no-pie -o easy
 EOF
+uv run rop/rop_easy.py
 ```
     """
     elf = ELF("./easy")
